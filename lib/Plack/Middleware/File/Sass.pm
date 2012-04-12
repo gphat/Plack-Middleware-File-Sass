@@ -5,7 +5,7 @@ use 5.008_001;
 our $VERSION = '0.03';
 
 use parent qw(Plack::Middleware);
-use Plack::Util::Accessor qw(sass syntax);
+use Plack::Util::Accessor qw(include sass syntax);
 use Plack::Util;
 use Carp ();
 
@@ -29,11 +29,20 @@ sub prepare_app {
 }
 
 sub sass_command {
-    my($syntax, $body) = @_;
+    my($syntax, $body, $inc) = @_;
+
+    my @includes = ();
+    if(defined($inc)) {
+        if(ref($inc) eq 'ARRAY') {
+            @includes = map { ('-I', $_) } @$inc;
+        } else {
+            @includes = ('-I', $inc)
+        }
+    }
 
     require IPC::Open3;
     my $pid = IPC::Open3::open3(my $in, my $out, my $err,
-          "sass", "--stdin", ($syntax eq 'scss' ? '--scss' : ()));
+          "sass", "--stdin", @includes, ($syntax eq 'scss' ? '--scss' : ()));
     print $in $body;
     close $in;
 
@@ -44,7 +53,7 @@ sub sass_command {
 }
 
 sub sass_perl {
-    my($syntax, $body) = @_;
+    my($syntax, $body, $inc) = @_;
 
     my $method = "${syntax}2css";
     $text_sass ||= Text::Sass->new;
@@ -55,6 +64,7 @@ sub call {
     my($self, $env) = @_;
 
     my $syntax = $self->syntax;
+    my $inc = $self->include;
 
     # Sort of depends on how App::File works
     my $orig_path_info = $env->{PATH_INFO};
@@ -65,7 +75,7 @@ sub call {
 
         if ($res->[0] == 200) {
             my $sass; Plack::Util::foreach($res->[2], sub { $sass .= $_[0] });
-            my $css = $self->sass->($syntax, $sass);
+            my $css = $self->sass->($syntax, $sass, $inc);
 
             my $h = Plack::Util::headers($res->[1]);
             $h->set('Content-Type' => 'text/css');
@@ -145,6 +155,12 @@ initialization of this middleware component.
 
 Defines which syntax to use. Valid values are I<sass> and
 I<scss>. Defaults to I<sass>.
+
+=item include
+
+Allows you to pass a path (or paths, using an arrayref) that sass processing
+will use to find included files. Note that this only works with the sass gem
+as L<Text::Sass> does not support C<@import>.
 
 =back
 
